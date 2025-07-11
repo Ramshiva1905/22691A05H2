@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-class Logger {
+class SimpleLogger {
   constructor() {
     this.logDir = path.join(__dirname, '../../logs');
     this.ensureLogDirectory();
@@ -13,85 +13,89 @@ class Logger {
     }
   }
 
-  formatTimestamp() {
+  getTimestamp() {
     return new Date().toISOString();
   }
 
-  formatMessage(level, message, metadata = {}) {
-    return JSON.stringify({
-      timestamp: this.formatTimestamp(),
+  formatLog(level, message, data = null) {
+    const logObject = {
+      timestamp: this.getTimestamp(),
       level: level.toUpperCase(),
-      message,
-      metadata,
-      pid: process.pid
-    }) + '\n';
+      message: message
+    };
+
+    if (data) {
+      logObject.data = data;
+    }
+
+    return JSON.stringify(logObject, null, 2) + '\n';
   }
 
-  writeToFile(filename, content) {
-    const filePath = path.join(this.logDir, filename);
-    fs.appendFileSync(filePath, content);
+  writeLog(content) {
+    const logFile = path.join(this.logDir, 'app.log');
+    try {
+      fs.appendFileSync(logFile, content);
+    } catch (error) {
+      console.error('Failed to write to log file:', error.message);
+    }
   }
 
-  info(message, metadata = {}) {
-    const logEntry = this.formatMessage('info', message, metadata);
-    this.writeToFile('app.log', logEntry);
-    this.writeToFile('info.log', logEntry);
+  info(message, data = null) {
+    const logEntry = this.formatLog('info', message, data);
+    this.writeLog(logEntry);
+    console.log(`📘 INFO: ${message}`, data ? data : '');
   }
 
-  error(message, metadata = {}) {
-    const logEntry = this.formatMessage('error', message, metadata);
-    this.writeToFile('app.log', logEntry);
-    this.writeToFile('error.log', logEntry);
+  error(message, data = null) {
+    const logEntry = this.formatLog('error', message, data);
+    this.writeLog(logEntry);
+    console.error(`🔴 ERROR: ${message}`, data ? data : '');
   }
 
-  warn(message, metadata = {}) {
-    const logEntry = this.formatMessage('warn', message, metadata);
-    this.writeToFile('app.log', logEntry);
-    this.writeToFile('warn.log', logEntry);
+  warn(message, data = null) {
+    const logEntry = this.formatLog('warn', message, data);
+    this.writeLog(logEntry);
+    console.warn(`🟡 WARN: ${message}`, data ? data : '');
   }
 
-  debug(message, metadata = {}) {
-    const logEntry = this.formatMessage('debug', message, metadata);
-    this.writeToFile('app.log', logEntry);
-    this.writeToFile('debug.log', logEntry);
+  debug(message, data = null) {
+    if (process.env.NODE_ENV === 'development') {
+      const logEntry = this.formatLog('debug', message, data);
+      this.writeLog(logEntry);
+      console.log(`🔍 DEBUG: ${message}`, data ? data : '');
+    }
   }
 
-  http(req, res, responseTime) {
-    const logEntry = this.formatMessage('http', 'HTTP Request', {
-      method: req.method,
-      url: req.url,
-      statusCode: res.statusCode,
-      responseTime: `${responseTime}ms`,
-      userAgent: req.get('User-Agent'),
-      ip: req.ip || req.connection.remoteAddress,
-      referrer: req.get('Referrer') || req.get('Referer')
-    });
-    this.writeToFile('app.log', logEntry);
-    this.writeToFile('http.log', logEntry);
+  success(message, data = null) {
+    const logEntry = this.formatLog('success', message, data);
+    this.writeLog(logEntry);
+    console.log(`✅ SUCCESS: ${message}`, data ? data : '');
   }
 }
 
-// Singleton instance
-const logger = new Logger();
+// Create logger instance
+const logger = new SimpleLogger();
 
-// Middleware function
+// Simple middleware for logging HTTP requests
 const loggingMiddleware = (req, res, next) => {
   const startTime = Date.now();
-  
+  const { method, url, ip } = req;
+
   // Log incoming request
-  logger.info('Incoming request', {
-    method: req.method,
-    url: req.url,
-    ip: req.ip || req.connection.remoteAddress,
+  logger.info(`${method} ${url}`, {
+    ip: ip || req.connection.remoteAddress,
     userAgent: req.get('User-Agent')
   });
 
-  // Override res.end to capture response
-  const originalEnd = res.end;
-  res.end = function(chunk, encoding) {
-    const responseTime = Date.now() - startTime;
-    logger.http(req, res, responseTime);
-    originalEnd.call(this, chunk, encoding);
+  // Capture response details
+  const originalSend = res.send;
+  res.send = function(data) {
+    const duration = Date.now() - startTime;
+    logger.info(`${method} ${url} - ${res.statusCode}`, {
+      duration: `${duration}ms`,
+      ip: ip || req.connection.remoteAddress
+    });
+    originalSend.call(this, data);
   };
 
   next();
